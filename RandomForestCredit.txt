@@ -1,0 +1,122 @@
+#sc %>% spark_session() %>% invoke("catalog") %>% invoke("dropTempView", "train")
+#sc %>% spark_session() %>% invoke("catalog") %>% invoke("dropTempView", "mydata")
+#for microsoft fabric
+install.packages("sparktf")
+library(sparktf)
+library(sparklyr)
+library(dplyr)
+library(modeldata)
+#library("caret")
+library("base")
+#library("DEoptim")
+library("pryr")
+#library("peakRAM")
+library("parallel")
+######################################
+
+config <- spark_config()
+config["spark.executor.cores"] <- 10
+
+#for microsoft fabric
+Sys.setenv(SPARK_HOME = "/opt/spark")
+#Sys.setenv(JAVA_HOME = "/usr/lib/jvm/default-java")
+sc <- spark_connect(master = "local",config=config)
+sdf_len(sc, 10, repartition = 10) %>% sdf_num_partitions()
+
+mydata <- read.csv("./builtin/creditcard.csv")
+mydata$Class2 <- ifelse(mydata$class == 1, 'yes', 'no') 
+mydata <- mydata[,c("V1","V2","V3","V4","V5","Class2")]
+mydata <- copy_to(sc, mydata)
+
+
+partitions <- mydata %>%
+  sdf_random_split(training = 0.7, test = 0.3, seed = 1111)
+train<- partitions$training
+test <- partitions$test
+
+
+##########################
+
+  ##########RS########################
+  ############parallel computing#####################
+numCores <- detectCores()
+
+##grid search
+#for microsoft fabric
+install.packages("NMOF")
+library("NMOF")
+testFun <- function(x){
+liste <-c(x[1L],x[2L])
+   return(liste)
+}
+par1 <- runif(10,0,1)
+par2 <- round(runif(10,1,10),0)
+sol <- gridSearch(fun = testFun, levels = list(par1, par2))
+sol$minfun
+
+sol$minlevels
+####tuning
+
+
+###########GLM############
+hesapla <- function(x){
+i <- 1
+j <- 1
+while(j <= length(par2))
+{
+while(i<=length(par1)){
+# Train the models
+rf_model <- train %>%
+ml_random_forest(Class2 ~ ., type = "classification",subsampling_rate=par1[i],max_depth=par2[j])
+pred <- ml_predict(rf_model, test)
+ml_multiclass_classification_evaluator(pred)
+
+i <- i+1
+}
+j <- j+1
+}
+}	
+
+system.time(
+  results <- mclapply(1, hesapla, mc.cores = numCores)
+)
+
+###
+###parallel processing
+###5 adet hiperparametre deneyi icin
+##grid 25  kombinasyon
+user  system elapsed 
+   5.16    0.09   38.09 
+###grid 100 kombinasyon
+   user  system elapsed 
+  9.593   0.136  47.626 
+
+####grid 400 kombinasyon
+  user  system elapsed 
+ 19.829   0.241 131.938 
+
+###sequential processing
+system.time(
+  results <- lapply(1, hesapla)
+)
+###5 adet hiperparametre deneyi icin
+##grid 25  kombinasyon
+  user  system elapsed 
+  5.409   0.128  49.931 
+###grid 100 kombinasyon
+ user  system elapsed 
+  9.746   0.092  53.333 
+
+####grid 400 kombinasyon
+user  system elapsed 
+ 20.057   0.229 133.626 
+
+#####CPU usage
+###parallel
+
+cpu_usage
+1 sec
+ - Command executed in 334 ms by Muhammed Maruf ÖZTÜRK on 11:35:48 AM, 2/12/25
+[1] 1.117527
+####sequential
+ 1.050175

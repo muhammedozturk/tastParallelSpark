@@ -1,0 +1,21 @@
+###CPU
+t2 <- proc.time()
+   par1 <- round(runif(4,1,5),0)
+par2 <- c("multinomial","bernoulli")
+system.time(
+  results <- mclapply(1, hesapla,mc.cores=8)
+)
+x=proc.time() - t2
+cpu_usage<-(as.numeric(x)[[2]]/as.numeric(x)[[1]])*100 # system time/user time
+
+
+
+#################
+#RAM#################
+peakRAM({
+    par1 <- round(runif(4,1,5),0)
+par2 <- c("multinomial","bernoulli")
+system.time(
+  results <- mclapply(1, hesapla,mc.cores=4)
+)
+})

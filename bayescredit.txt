@@ -1,0 +1,126 @@
+#sc %>% spark_session() %>% invoke("catalog") %>% invoke("dropTempView", "train")
+#sc %>% spark_session() %>% invoke("catalog") %>% invoke("dropTempView", "mydata")
+#for microsoft fabric
+install.packages("sparktf")
+library(sparktf)
+library(sparklyr)
+library(dplyr)
+library(modeldata)
+#library("caret")
+library("base")
+#library("DEoptim")
+library("pryr")
+#library("peakRAM")
+library("parallel")
+######################################
+
+config <- spark_config()
+config["spark.executor.cores"] <- 10
+
+#for microsoft fabric
+Sys.setenv(SPARK_HOME = "/opt/spark")
+#Sys.setenv(JAVA_HOME = "/usr/lib/jvm/default-java")
+sc <- spark_connect(master = "local",config=config)
+sdf_len(sc, 10, repartition = 10) %>% sdf_num_partitions()
+
+mydata <- read.csv("./builtin/creditcard.csv")
+mydata$Class2 <- ifelse(mydata$class == 1, 'yes', 'no') 
+mydata <- mydata[,c("V1","V2","V3","V4","V5","Class2")]
+##replace negative for bayes
+mydata[] <- lapply(mydata, function(col) ifelse(col < 0, -col, col))
+mydata <- copy_to(sc, mydata)
+
+
+partitions <- mydata %>%
+  sdf_random_split(training = 0.7, test = 0.3, seed = 1111)
+train<- partitions$training
+test <- partitions$test
+
+
+##########################
+
+  ##########RS########################
+  ############parallel computing#####################
+numCores <- detectCores()
+
+##grid search
+#for microsoft fabric
+install.packages("NMOF")
+library("NMOF")
+testFun <- function(x){
+liste <-c(x[1L],x[2L])
+   return(liste)
+}
+par1 <- round(runif(5,1,5),0)
+par2 <- c("multinomial","bernoulli")
+sol <- gridSearch(fun = testFun, levels = list(par1, par2))
+sol$minfun
+
+sol$minlevels
+
+
+####tuning
+hesapla <- function(x){
+j <- 1
+i <- 1
+while(j<=length(par2)){
+while(i<=length(par1)){
+    nb_model <- train %>% 
+  ml_naive_bayes(Class2 ~.,model_type=par2[j],smoothing=par1[i]) 
+pred <- ml_predict(nb_model, test) 
+i <- i+1
+}
+j <- j+1
+}
+    }#end of function
+
+
+
+
+results <- c()
+k <- 1
+while(k<=4){ 
+par1 <- round(runif(k,1,5),0)
+tmp <- system.time(
+  results <- mclapply(1, hesapla, mc.cores = numCores)
+)
+results <- append(results,tmp)
+k <- k+1
+}##end of k	
+###
+###parallel
+###25 kombinasyon deneyi icin
+   user  system elapsed 
+ 23.525   0.238  53.090 
+###100 kombinasyon
+  user  system elapsed 
+ 91.644   1.031 211.907 
+###400 kombinasyon  
+user  system elapsed 
+378.526   4.381 861.084 
+####sequential
+###25 kombinasyon deneyi icin
+ user  system elapsed 
+ 23.748   0.287  54.151 
+###100 kombinasyon
+user  system elapsed 
+ 95.298   1.020 213.825 
+###400 kombinasyon  
+ user  system elapsed 
+393.058   4.382 877.250 
+###sequential
+1.478582
+####parallel
+0.3619091
+#######deneme
+timeList <- c()
+k <- 1
+while(k<=200){ 
+par1 <- round(runif(k,1,5),0)
+tmp <- system.time(
+  results <- mclapply(1, hesapla, mc.cores = numCores)
+)
+timeList <- append(timeList,tmp[[3]])
+k <- k+1
+}##end of k
+

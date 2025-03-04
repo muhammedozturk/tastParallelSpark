@@ -1,0 +1,114 @@
+#sc %>% spark_session() %>% invoke("catalog") %>% invoke("dropTempView", "train")
+#sc %>% spark_session() %>% invoke("catalog") %>% invoke("dropTempView", "mydata")
+#for microsoft fabric
+install.packages("sparktf")
+library(sparktf)
+library(sparklyr)
+library(dplyr)
+library(modeldata)
+#library("caret")
+library("base")
+#library("DEoptim")
+library("pryr")
+#library("peakRAM")
+library("parallel")
+######################################
+
+config <- spark_config()
+config["spark.executor.cores"] <- 10
+
+#for microsoft fabric
+Sys.setenv(SPARK_HOME = "/opt/spark")
+#Sys.setenv(JAVA_HOME = "/usr/lib/jvm/default-java")
+sc <- spark_connect(master = "local",config=config)
+sdf_len(sc, 10, repartition = 10) %>% sdf_num_partitions()
+
+mydata <- read.csv("./builtin/creditcard.csv")
+mydata$Class2 <- ifelse(mydata$class == 1, 'yes', 'no') 
+mydata <- mydata[,c("V1","V2","V3","V4","V5","Class2")]
+mydata <- copy_to(sc, mydata)
+
+
+partitions <- mydata %>%
+  sdf_random_split(training = 0.7, test = 0.3, seed = 1111)
+train<- partitions$training
+test <- partitions$test
+
+
+##########################
+
+  ##########RS########################
+  ############parallel computing#####################
+numCores <- detectCores()
+
+##grid search
+#for microsoft fabric
+install.packages("NMOF")
+library("NMOF")
+testFun <- function(x){
+liste <-c(x[1L],x[2L])
+   return(liste)
+}
+par1 <- runif(5,0,1)
+par2 <- runif(5,1e-06,1e-02)
+sol <- gridSearch(fun = testFun, levels = list(par1, par2))
+sol$minfun
+
+sol$minlevels
+####tuning
+hesapla <- function(x){
+j <- 1
+i <- 1
+while(j<=length(par2)){
+while(i<=length(par1)){
+glm_model <- train %>% 
+  ml_logistic_regression(Class2 ~.,elastic_net_param=par1[i],tol=par2[j])
+  result <-  ml_predict(glm_model, test) %>% 
+  count(Class2, prediction) 
+i <- i+1
+}
+j <- j+1
+}
+    }#end of function
+	
+
+system.time(
+  results <- mclapply(1, hesapla, mc.cores = numCores)
+)
+###
+###parallel
+###25 kombinasyon deneyi icin
+  user  system elapsed 
+  4.555   0.008  24.768 
+###100 kombinasyon
+ user  system elapsed 
+  9.346   0.075  43.289 
+###400 kombinasyon  
+ user  system elapsed 
+ 18.201   0.192  95.287 
+####sequential
+###25 kombinasyon deneyi icin
+ user  system elapsed 
+  4.547   0.055  20.995 
+###100 kombinasyon
+ user  system elapsed 
+  8.957   0.099  40.733 
+###400 kombinasyon  
+ user  system elapsed 
+ 18.279   0.193  83.882 
+##parallel cpu
+1.168199
+##sequential cpu
+0.93
+
+vektor1 <- c(1,10,20,30,40,50)
+
+timeList <- c()
+for(val in vektor1){
+par1 <- runif(val,0,1)
+tmp <- system.time(
+  results <- mclapply(1, hesapla,mc.cores=8)
+)
+timeList <- append(timeList,tmp[[3]])
+}##end of k
+print(timeList)

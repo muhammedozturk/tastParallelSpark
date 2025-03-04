@@ -1,0 +1,103 @@
+#sc %>% spark_session() %>% invoke("catalog") %>% invoke("dropTempView", "train")
+#sc %>% spark_session() %>% invoke("catalog") %>% invoke("dropTempView", "mydata")
+#for microsoft fabric
+install.packages("sparktf")
+library(sparktf)
+library(sparklyr)
+library(dplyr)
+library(modeldata)
+#library("caret")
+library("base")
+#library("DEoptim")
+library("pryr")
+#library("peakRAM")
+library("parallel")
+######################################
+
+config <- spark_config()
+config["spark.executor.cores"] <- 10
+
+#for microsoft fabric
+Sys.setenv(SPARK_HOME = "/opt/spark")
+#Sys.setenv(JAVA_HOME = "/usr/lib/jvm/default-java")
+sc <- spark_connect(master = "local",config=config)
+sdf_len(sc, 10, repartition = 10) %>% sdf_num_partitions()
+
+mydata <- read.csv("./builtin/creditcard.csv")
+mydata$Class2 <- ifelse(mydata$class == 1, 'yes', 'no') 
+mydata <- mydata[,c("V1","V2","V3","V4","V5","Class2")]
+mydata <- copy_to(sc, mydata)
+
+
+partitions <- mydata %>%
+  sdf_random_split(training = 0.7, test = 0.3, seed = 1111)
+train<- partitions$training
+test <- partitions$test
+
+
+##########################
+
+  ##########RS########################
+  ############parallel computing#####################
+numCores <- detectCores()
+
+##grid search
+#for microsoft fabric
+install.packages("NMOF")
+library("NMOF")
+testFun <- function(x){
+liste <-c(x[1L],x[2L])
+   return(liste)
+}
+par1 <- round(runif(10,10,50),0)
+par2 <- runif(10,1e-06,1e-02)
+sol <- gridSearch(fun = testFun, levels = list(par1, par2))
+sol$minfun
+
+sol$minlevels
+####tuning
+hesapla <- function(x){
+
+i <- 1
+j <- 1
+while(j<=length(par1)){
+while(i<=length(par2)){
+formula <- Class2 ~ .
+# Train the models
+kmeans_model <- ml_kmeans(train, formula = formula,tol=par2[i],max_iter=par1[j])
+pred_kmeans <- ml_predict(kmeans_model, test)
+result <- ml_clustering_evaluator(pred_kmeans)
+i <- i+1
+}
+j <- j+1
+}
+}#end of function
+	
+
+system.time(
+  results <- mclapply(1, hesapla, mc.cores = numCores)
+)
+###
+###parallel
+###25 kombinasyon
+ # user  system elapsed 
+ # 2.311   0.020  29.382 
+###100 kombinasyon
+   user  system elapsed 
+  4.690   0.043  58.138 
+####400 kombinasyon
+ user  system elapsed 
+  9.293   0.129 118.495
+#####sequential
+###25 kombinasyon
+user  system elapsed 
+  2.514   0.019  30.355 
+###400 kombinasyon
+user  system elapsed 
+  9.429   0.093 116.794 
+
+###CPU usage
+##parallel
+0.9764503
+###sequential
+1.183551

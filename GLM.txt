@@ -1,0 +1,93 @@
+#sc %>% spark_session() %>% invoke("catalog") %>% invoke("dropTempView", "train")
+#sc %>% spark_session() %>% invoke("catalog") %>% invoke("dropTempView", "mydata")
+install.packages("sparktf")
+library(sparktf)
+library(sparklyr)
+library(dplyr)
+library(modeldata)
+#library("caret")
+library("base")
+#library("DEoptim")
+library("pryr")
+#library("peakRAM")
+library("parallel")
+######################################
+
+config <- spark_config()
+config["spark.executor.cores"] <- 10
+
+#for microsoft fabric
+Sys.setenv(SPARK_HOME = "/opt/spark")
+#Sys.setenv(JAVA_HOME = "/usr/lib/jvm/default-java")
+sc <- spark_connect(master = "local",config=config)
+sdf_len(sc, 10, repartition = 10) %>% sdf_num_partitions()
+
+mydata <- read.csv("./builtin/trainDense.csv")
+mydata$Class2 <- ifelse(mydata$Class2 == 1, 'yes', 'no') 
+mydata <- mydata[,c("X1","X2","X3","X4","X7","Class2")]
+mydata <- copy_to(sc, mydata)
+
+
+partitions <- mydata %>%
+  sdf_random_split(training = 0.7, test = 0.3, seed = 1111)
+train<- partitions$training
+test <- partitions$test
+
+
+##########################
+
+  ##########RS########################
+  ############parallel computing#####################
+numCores <- detectCores()
+hesapla <- function(x){
+###########GLM############
+glm_model <- train %>% 
+  ml_logistic_regression(Class2 ~.)
+  result <-  ml_predict(glm_model, test) %>% 
+  count(Class2, prediction) 
+    }
+
+
+system.time(
+  results <- mclapply(1, hesapla, mc.cores = numCores)
+)
+
+
+
+  pred <- ml_predict(glm_model, mtcars_test)
+
+##grid search
+library("NMOF")
+testFun <- function(x){
+liste <-c(x[1L],x[2L])
+   return(liste)
+}
+par1 <- runif(5,0,1)
+par2 <- runif(5,1e-06,1e-02)
+sol <- gridSearch(fun = testFun, levels = list(par1, par2))
+sol$minfun
+
+sol$minlevels
+####tuning
+hesapla <- function(x){
+###########GLM############
+
+i <- 1
+while(i<=length(par1)){
+glm_model <- train %>% 
+  ml_logistic_regression(Class2 ~.,elastic_net_param=par1[i],tol=1e-03)
+  result <-  ml_predict(glm_model, test) %>% 
+  count(Class2, prediction) 
+i <- i+1
+}
+    }
+	
+
+system.time(
+  results <- mclapply(1, hesapla, mc.cores = numCores)
+)
+###
+###
+###5 adet hiperparametre deneyi icin
+# user  system elapsed 
+# 4.695   0.054  16.263 
